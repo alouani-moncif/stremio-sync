@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Stremio-Sync</string>
+    <string name="status_connecting">Connecting to server…</string>
+    <string name="status_connected">● Connected to server</string>
+    <string name="status_disconnected">○ Reconnecting…</string>
+    <string name="create_room">Create Room</string>
+    <string name="join_room">Join Room</string>
+    <string name="waiting_for_url">Waiting for Stremio URL…</string>
+    <string name="waiting_for_partner">Waiting for partner…</string>
+    <string name="partner_connected">Partner connected ✓</string>
+    <string name="partner_disconnected">Partner disconnected</string>
+    <string name="partner_buffering">Partner buffering…</string>
+    <string name="enter_room_code">Enter room code</string>
+</resources>

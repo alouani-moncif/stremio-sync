@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Leanback" parent="@style/Theme.Leanback.Browse">
+        <item name="colorPrimary">#8a63d2</item>
+        <item name="colorPrimaryDark">#6a43b2</item>
+        <item name="colorAccent">#8a63d2</item>
+        <item name="android:windowBackground">#0f0f0f</item>
+    </style>
+</resources>

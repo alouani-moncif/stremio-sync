@@ -1,0 +1,30 @@
+{
+  "name": "stremio-sync-windows",
+  "version": "1.0.0",
+  "description": "Stremio-Sync Windows client",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.stremiosync.windows",
+    "productName": "Stremio-Sync",
+    "win": {
+      "target": "nsis"
+    },
+    "protocols": [
+      {
+        "name": "Stremio",
+        "schemes": ["stremio"]
+      }
+    ]
+  }
+}

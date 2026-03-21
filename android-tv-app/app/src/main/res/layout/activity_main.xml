@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="48dp"
+    android:background="#0f0f0f">
+
+    <TextView
+        android:id="@+id/titleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🎬 Stremio-Sync"
+        android:textSize="32sp"
+        android:textColor="#8a63d2"
+        android:textStyle="bold"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Connecting..."
+        android:textSize="14sp"
+        android:textColor="#666"
+        android:layout_marginBottom="40dp" />
+
+    <!-- Host section -->
+    <LinearLayout
+        android:id="@+id/hostSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#1a1a1a"
+        android:padding="24dp"
+        android:layout_marginBottom="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="HOST — OPEN FROM STREMIO"
+            android:textSize="12sp"
+            android:textColor="#888"
+            android:letterSpacing="0.1"
+            android:layout_marginBottom="16dp" />
+
+        <Button
+            android:id="@+id/createBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Waiting for Stremio URL..."
+            android:enabled="false"
+            android:backgroundTint="#8a63d2"
+            android:textColor="#fff" />
+
+        <TextView
+            android:id="@+id/roomCodeText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="48sp"
+            android:textColor="#8a63d2"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:letterSpacing="0.3"
+            android:layout_marginTop="16dp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- Guest section -->
+    <LinearLayout
+        android:id="@+id/guestSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#1a1a1a"
+        android:padding="24dp"
+        android:layout_marginBottom="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="GUEST — JOIN ROOM"
+            android:textSize="12sp"
+            android:textColor="#888"
+            android:letterSpacing="0.1"
+            android:layout_marginBottom="16dp" />
+
+        <EditText
+            android:id="@+id/codeInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Enter room code"
+            android:textColorHint="#555"
+            android:textColor="#fff"
+            android:background="#2a2a2a"
+            android:padding="12dp"
+            android:textSize="24sp"
+            android:gravity="center"
+            android:letterSpacing="0.3"
+            android:inputType="textCapCharacters"
+            android:maxLength="6"
+            android:layout_marginBottom="12dp" />
+
+        <Button
+            android:id="@+id/joinBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Join Room"
+            android:enabled="false"
+            android:backgroundTint="#8a63d2"
+            android:textColor="#fff" />
+
+    </LinearLayout>
+
+    <!-- Peer status -->
+    <TextView
+        android:id="@+id/peerStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:textColor="#4caf50"
+        android:gravity="center"
+        android:padding="12dp"
+        android:background="#1a2a1a"
+        android:visibility="gone" />
+
+</LinearLayout>
