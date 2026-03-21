@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Stremio-Sync</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f0f0f;
+      color: #fff;
+      font-family: 'Segoe UI', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      padding: 32px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: #8a63d2;
+      letter-spacing: 1px;
+    }
+
+    .status-bar {
+      font-size: 12px;
+      color: #666;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #444;
+    }
+    .dot.connected { background: #4caf50; }
+    .dot.disconnected { background: #f44336; }
+
+    .card {
+      background: #1a1a1a;
+      border-radius: 12px;
+      padding: 24px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card h2 {
+      font-size: 14px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    input {
+      background: #2a2a2a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 14px;
+      padding: 10px 14px;
+      width: 100%;
+      outline: none;
+      transition: border 0.2s;
+    }
+    input:focus { border-color: #8a63d2; }
+    input::placeholder { color: #555; }
+
+    button {
+      background: #8a63d2;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 10px 20px;
+      transition: background 0.2s;
+      width: 100%;
+    }
+    button:hover { background: #7a53c2; }
+    button:disabled { background: #444; cursor: not-allowed; }
+
+    .room-code {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: 8px;
+      color: #8a63d2;
+      text-align: center;
+      padding: 12px 0;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: #555;
+      text-align: center;
+    }
+
+    .peer-status {
+      font-size: 13px;
+      text-align: center;
+      padding: 8px;
+      border-radius: 8px;
+      background: #2a2a2a;
+    }
+    .peer-status.online { color: #4caf50; }
+    .peer-status.offline { color: #f44336; }
+    .peer-status.buffering { color: #ff9800; }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #444;
+      font-size: 12px;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #333;
+    }
+
+    #intercepted-url {
+      font-size: 11px;
+      color: #4caf50;
+      word-break: break-all;
+      background: #1a2a1a;
+      padding: 8px;
+      border-radius: 6px;
+      display: none;
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <h1>🎬 Stremio-Sync</h1>
+
+  <div class="status-bar">
+    <div class="dot" id="conn-dot"></div>
+    <span id="conn-label">Connecting to server...</span>
+  </div>
+
+  <!-- Intercepted URL display -->
+  <div id="intercepted-url"></div>
+
+  <!-- HOST SECTION -->
+  <div class="card" id="host-section">
+    <h2>Host — Create Room</h2>
+    <input id="url-input" type="text" placeholder="Paste stream URL (or open from Stremio)" />
+    <button id="create-btn" disabled>Create Room</button>
+    <div id="room-code-display" class="hidden">
+      <div class="room-code" id="room-code"></div>
+      <div class="hint">Share this code with your partner</div>
+    </div>
+  </div>
+
+  <div class="divider">or</div>
+
+  <!-- GUEST SECTION -->
+  <div class="card" id="guest-section">
+    <h2>Guest — Join Room</h2>
+    <input id="code-input" type="text" placeholder="Enter room code" maxlength="6" style="text-transform:uppercase;letter-spacing:4px;text-align:center;" />
+    <button id="join-btn" disabled>Join Room</button>
+  </div>
+
+  <!-- PEER STATUS -->
+  <div class="peer-status offline hidden" id="peer-status">Waiting for partner...</div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    let serverConnected = false;
+
+    // ─── Server connection status ─────────────────────────────────────
+    window.sync.onSyncConnected(() => {
+      serverConnected = true;
+      $("conn-dot").className = "dot connected";
+      $("conn-label").textContent = "Connected to server";
+      $("create-btn").disabled = false;
+      $("join-btn").disabled = false;
+    });
+
+    window.sync.onSyncDisconnected(() => {
+      serverConnected = false;
+      $("conn-dot").className = "dot disconnected";
+      $("conn-label").textContent = "Reconnecting...";
+      $("create-btn").disabled = true;
+      $("join-btn").disabled = true;
+    });
+
+    // ─── Stream URL intercepted from Stremio ─────────────────────────
+    window.sync.onStreamIntercepted((url) => {
+      $("url-input").value = url;
+      $("intercepted-url").textContent = "✓ URL captured from Stremio: " + url;
+      $("intercepted-url").style.display = "block";
+    });
+
+    // ─── Create room ──────────────────────────────────────────────────
+    $("create-btn").addEventListener("click", () => {
+      const url = $("url-input").value.trim();
+      if (!url) return alert("Please enter or capture a stream URL first.");
+      window.sync.createRoom(url);
+      $("create-btn").disabled = true;
+      $("create-btn").textContent = "Creating...";
+    });
+
+    window.sync.onRoomCreated((code) => {
+      $("room-code").textContent = code;
+      $("room-code-display").classList.remove("hidden");
+      $("create-btn").textContent = "Room Created ✓";
+      $("peer-status").classList.remove("hidden");
+      $("peer-status").textContent = "Waiting for partner to join...";
+      $("peer-status").className = "peer-status offline";
+      $("guest-section").classList.add("hidden");
+    });
+
+    // ─── Join room ────────────────────────────────────────────────────
+    $("join-btn").addEventListener("click", () => {
+      const code = $("code-input").value.trim().toUpperCase();
+      if (code.length < 4) return alert("Please enter a valid room code.");
+      window.sync.joinRoom(code);
+      $("join-btn").disabled = true;
+      $("join-btn").textContent = "Joining...";
+    });
+
+    window.sync.onRoomJoined(({ code, url }) => {
+      $("join-btn").textContent = "Joined ✓";
+      $("host-section").classList.add("hidden");
+      $("peer-status").classList.remove("hidden");
+      $("peer-status").textContent = "Connected — syncing with partner";
+      $("peer-status").className = "peer-status online";
+    });
+
+    // ─── Peer status ──────────────────────────────────────────────────
+    window.sync.onPeerConnected(() => {
+      $("peer-status").textContent = "Partner connected ✓ — syncing";
+      $("peer-status").className = "peer-status online";
+    });
+
+    window.sync.onPeerDisconnected(() => {
+      $("peer-status").textContent = "Partner disconnected";
+      $("peer-status").className = "peer-status offline";
+    });
+
+    window.sync.onPeerBuffering((buffering) => {
+      if (buffering) {
+        $("peer-status").textContent = "Partner is buffering... waiting";
+        $("peer-status").className = "peer-status buffering";
+      } else {
+        $("peer-status").textContent = "Partner ready — resuming";
+        $("peer-status").className = "peer-status online";
+      }
+    });
+
+    window.sync.onSyncError((msg) => alert("Sync error: " + msg));
+
+    window.sync.onMpvClosed(() => {
+      $("peer-status").textContent = "Playback ended";
+      $("peer-status").className = "peer-status offline";
+    });
+
+    // ─── Init ─────────────────────────────────────────────────────────
+    window.sync.connect();
+  </script>
+</body>
+</html>
