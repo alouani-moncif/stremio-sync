@@ -5,16 +5,18 @@ const path = require("path");
 const WebSocket = require("ws");
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-const SYNC_SERVER = process.env.SYNC_SERVER || "wss://stremio-sync-server.onrender.com";
-const MPV_PATH = process.env.MPV_PATH || "mpv";
-const MPV_PIPE = "\\\\.\\pipe\\stremio-sync-mpv";
+const SYNC_SERVER = process.env.SYNC_SERVER || "ws://localhost:3000";
+const MPV_PATH = process.env.MPV_PATH || "C:\\Program Files\\mpv\\mpv.exe";
+const MPV_PIPE = `\\\\.\\pipe\\stremio-sync-mpv-${Date.now()}`;
 
 // ─── State ───────────────────────────────────────────────────────────────────
+let bufferDebounce = null;
+let mpvReady = false;
 let mainWindow = null;
 let mpvProcess = null;
 let mpvSocket = null;
 let syncSocket = null;
-let isSyncing = false; // prevent feedback loops
+let syncingEvent = null;
 let mpvCommandQueue = [];
 
 // ─── Register as stremio:// protocol handler ─────────────────────────────────
@@ -27,19 +29,19 @@ if (process.defaultApp) {
 }
 
 // ─── Single instance lock (handle protocol on Windows) ───────────────────────
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
-} else {
-  app.on("second-instance", (event, commandLine) => {
-    const url = commandLine.find((arg) => arg.startsWith("stremio://"));
-    if (url) handleStremioUrl(url);
-    if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
-}
+//const gotLock = app.requestSingleInstanceLock();
+//if (!gotLock) {
+//  app.quit();
+//} else {
+//  app.on("second-instance", (event, commandLine) => {
+//    const url = commandLine.find((arg) => arg.startsWith("stremio://"));
+//    if (url) handleStremioUrl(url);
+//    if (mainWindow) {
+//      mainWindow.show();
+//     mainWindow.focus();
+//    }
+//  });
+//}
 
 // ─── Create Window ───────────────────────────────────────────────────────────
 function createWindow() {
@@ -106,7 +108,7 @@ function launchMpv(url) {
   });
 
   // Give MPV a moment to create the pipe
-  setTimeout(() => connectMpvIpc(), 1000);
+  setTimeout(() => connectMpvIpc(), 4000);
 }
 
 // ─── Connect to MPV IPC (named pipe) ─────────────────────────────────────────
@@ -114,7 +116,7 @@ function connectMpvIpc() {
   mpvSocket = net.createConnection(MPV_PIPE);
   let buffer = "";
 
-  mpvSocket.on("connect", () => {
+	mpvSocket.on("connect", () => {
     console.log("Connected to MPV IPC");
     // Flush queued commands
     mpvCommandQueue.forEach((cmd) => sendMpvCommand(cmd));
@@ -123,7 +125,9 @@ function connectMpvIpc() {
     sendMpvCommand({ command: ["observe_property", 1, "pause"] });
     sendMpvCommand({ command: ["observe_property", 2, "time-pos"] });
     sendMpvCommand({ command: ["observe_property", 3, "paused-for-cache"] });
-  });
+    // Mark MPV as ready after stream has had time to load
+    setTimeout(() => { mpvReady = true; console.log("MPV ready for sync"); }, 3000);
+	});
 
   mpvSocket.on("data", (data) => {
     buffer += data.toString();
@@ -157,7 +161,7 @@ let lastPause = null;
 let lastTimestamp = 0;
 
 function handleMpvEvent(msg) {
-  if (isSyncing) return; // ignore events triggered by sync
+  if (syncingEvent === "pause" && msg.name === "pause") return;
 
   if (msg.event === "property-change") {
     if (msg.name === "pause") {
@@ -167,11 +171,20 @@ function handleMpvEvent(msg) {
       sendSync(paused ? { event: "pause", timestamp: lastTimestamp }
                       : { event: "play",  timestamp: lastTimestamp });
     }
+
     if (msg.name === "time-pos" && msg.data != null) {
-      lastTimestamp = msg.data;
+      const newTimestamp = msg.data;
+      if (Math.abs(newTimestamp - lastTimestamp) > 3 && syncingEvent !== "seek") {
+        sendSync({ event: "seek", timestamp: newTimestamp });
+      }
+      lastTimestamp = newTimestamp;
     }
+
     if (msg.name === "paused-for-cache") {
-      sendSync({ event: msg.data ? "buffering-start" : "buffering-end", timestamp: lastTimestamp });
+      clearTimeout(bufferDebounce);
+      bufferDebounce = setTimeout(() => {
+        sendSync({ event: msg.data ? "buffering-start" : "buffering-end", timestamp: lastTimestamp });
+      }, 1000);
     }
   }
 }
@@ -208,7 +221,6 @@ function sendSync(msg) {
 
 // ─── Handle sync server events → control MPV ─────────────────────────────────
 function handleSyncEvent(msg) {
-  isSyncing = true;
 
   switch (msg.event) {
     case "room-created":
@@ -228,19 +240,19 @@ function handleSyncEvent(msg) {
       mainWindow?.webContents.send("peer-disconnected");
       break;
 
-    case "play":
-      sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
-      sendMpvCommand({ command: ["set_property", "pause", false] });
-      break;
+	case "play":
+		sendMpvCommand({ command: ["set_property", "pause", false] });
+	break;
 
-    case "pause":
-      sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
-      sendMpvCommand({ command: ["set_property", "pause", true] });
-      break;
+	case "pause":
+		sendMpvCommand({ command: ["set_property", "pause", true] });
+	break;
 
     case "seek":
-      sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
-      break;
+		if (mpvReady) {
+			sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
+		}
+	break;
 
     case "buffering-start":
       sendMpvCommand({ command: ["set_property", "pause", true] });
@@ -258,7 +270,8 @@ function handleSyncEvent(msg) {
       break;
   }
 
-  setTimeout(() => { isSyncing = false; }, 200);
+syncingEvent = msg.event;
+setTimeout(() => { syncingEvent = null; }, 1500);
 }
 
 // ─── Heartbeat ───────────────────────────────────────────────────────────────
