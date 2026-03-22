@@ -52,7 +52,18 @@ class MpvActivity : FragmentActivity() {
         setContentView(playerView)
 
         // Setup ExoPlayer
-        player = ExoPlayer.Builder(this).build()
+        player = ExoPlayer.Builder(this)
+    .setLoadControl(
+        androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                15_000,
+                60_000,
+                2_500,
+                5_000
+            )
+            .build()
+    )
+    .build()
         playerView.player = player
         playerView.useController = true
 
@@ -71,28 +82,7 @@ class MpvActivity : FragmentActivity() {
         handler.post(timestampPoller)
     }
 
-    private fun setupPlayerListeners() {
-        player.addListener(object : Player.Listener {
-
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isSyncing) return
-                lastTimestamp = player.currentPosition / 1000.0
-                if (isPlaying) {
-                    syncManager.play(lastTimestamp)
-                } else {
-                    syncManager.pause(lastTimestamp)
-                }
-            }
-
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (isSyncing) return
-                when (playbackState) {
-                    Player.STATE_BUFFERING -> syncManager.bufferingStart(lastTimestamp)
-                    Player.STATE_READY -> syncManager.bufferingEnd(lastTimestamp)
-                }
-            }
-        })
-    }
+    setupPlayerListeners
 
     private fun setupSyncListeners() {
         syncManager.setListener { event, data ->
@@ -140,7 +130,6 @@ class MpvActivity : FragmentActivity() {
 
     override fun onPause() {
         super.onPause()
-        player.pause()
     }
 
     override fun onResume() {
