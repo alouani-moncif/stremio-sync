@@ -128,4 +128,6 @@ class SyncManager(private val serverUrl: String) {
         ws?.close()
         ws = null
     }
+	
+	fun ready(timestamp: Double) = send("ready", "timestamp" to timestamp)
 }

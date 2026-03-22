@@ -51,6 +51,7 @@ function cleanupClient(clientId, roomCode) {
     delete rooms[roomCode];
     console.log(`Room ${roomCode} deleted (empty)`);
   }
+  if (room.readyClients) room.readyClients.delete(clientId);
 }
 
 wss.on("connection", (ws) => {
@@ -69,6 +70,31 @@ wss.on("connection", (ws) => {
     }
 
     switch (msg.event) {
+		
+	case "ready": {
+    if (!currentRoom || !rooms[currentRoom]) return;
+    if (!rooms[currentRoom].readyClients) {
+        rooms[currentRoom].readyClients = new Set();
+    }
+    rooms[currentRoom].readyClients.add(clientId);
+    
+    // Tell the other peer we're ready
+    broadcastToRoom(currentRoom, clientId, {
+        event: "peer-ready"
+    });
+
+    // If everyone is ready, fire play to all
+    if (rooms[currentRoom].readyClients.size >= rooms[currentRoom].clients.size) {
+        rooms[currentRoom].readyClients.clear();
+        const ts = msg.timestamp;
+        rooms[currentRoom].timestamp = ts;
+        broadcastToAll(currentRoom, {
+            event: "play",
+            timestamp: ts,
+        });
+    }
+    break;
+}
 
       // ─── HOST CREATES ROOM ───────────────────────────────────────────
       case "create-room": {

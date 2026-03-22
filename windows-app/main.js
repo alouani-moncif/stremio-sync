@@ -169,8 +169,13 @@ function handleMpvEvent(msg) {
       const paused = msg.data;
       if (paused === lastPause) return;
       lastPause = paused;
-      sendSync(paused ? { event: "pause", timestamp: lastTimestamp }
-                      : { event: "play",  timestamp: lastTimestamp });
+      if (!paused) {
+        // Don't send play — send ready, let server coordinate
+        sendMpvCommand({ command: ["set_property", "pause", true] });
+        sendSync({ event: "ready", timestamp: lastTimestamp });
+    } else {
+        sendSync({ event: "pause", timestamp: lastTimestamp });
+    }
     }
 
     if (msg.name === "time-pos" && msg.data != null) {

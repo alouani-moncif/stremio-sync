@@ -81,15 +81,18 @@ class MpvActivity : FragmentActivity() {
         player.addListener(object : Player.Listener {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isSyncing) return
-                lastTimestamp = player.currentPosition / 1000.0
-                if (isPlaying) {
-                    syncManager.bufferingEnd(lastTimestamp)
-                    syncManager.play(lastTimestamp)
-                } else {
-                    syncManager.pause(lastTimestamp)
-                }
-            }
+    if (isSyncing) return
+    lastTimestamp = player.currentPosition / 1000.0
+    if (isPlaying) {
+        // Don't play yet — pause and signal ready, wait for server to say play
+        player.pause()
+        isSyncing = true
+        syncManager.bufferingEnd(lastTimestamp)
+        syncManager.ready(lastTimestamp)
+    } else {
+        syncManager.pause(lastTimestamp)
+    }
+}
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (isSyncing) return
