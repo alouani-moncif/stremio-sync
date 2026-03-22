@@ -165,6 +165,7 @@ function handleMpvEvent(msg) {
 
   if (msg.event === "property-change") {
     if (msg.name === "pause") {
+	  if (!mpvReady) return; 
       const paused = msg.data;
       if (paused === lastPause) return;
       lastPause = paused;

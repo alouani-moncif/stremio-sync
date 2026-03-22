@@ -68,10 +68,10 @@ class MpvActivity : FragmentActivity() {
         player.playWhenReady = true
 
         // Setup sync
-        syncManager = SyncManager(SyncManager.SERVER_URL)
+        syncManager = SyncManager.getInstance()
         setupPlayerListeners()
         setupSyncListeners()
-        syncManager.connect()
+        
 
         // Start timestamp polling
         handler.post(timestampPoller)

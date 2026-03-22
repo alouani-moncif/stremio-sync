@@ -14,12 +14,35 @@ class SyncManager(private val serverUrl: String) {
     companion object {
         const val TAG = "SyncManager"
         const val SERVER_URL = "ws://192.168.11.103:3000"
+		
+		
+		private var instance: SyncManager? = null
+		fun getInstance(): SyncManager {
+			if (instance == null) instance = SyncManager(SERVER_URL)
+			return instance!!
+		}
     }
 
     private val gson = Gson()
     private var ws: WebSocketClient? = null
     private var listener: SyncEventListener? = null
     private var reconnectJob: Thread? = null
+
+	private var currentRoomCode: String? = null
+	private var currentRoomUrl: String? = null
+	private var currentIsHost: Boolean = false
+
+	fun createRoom(url: String) {
+		currentRoomUrl = url
+		currentIsHost = true
+		send("create-room", "url" to url)
+	}
+
+	fun joinRoom(code: String) {
+		currentRoomCode = code
+		currentIsHost = false
+		send("join-room", "code" to code)
+	}
 
     fun setListener(l: SyncEventListener) {
         listener = l
@@ -89,15 +112,26 @@ class SyncManager(private val serverUrl: String) {
     }
 
     private fun scheduleReconnect() {
-        reconnectJob = Thread {
-            Thread.sleep(3000)
-            connect()
-        }.also { it.isDaemon = true; it.start() }
-    }
+    reconnectJob = Thread {
+        Thread.sleep(3000)
+        connect()
+        // After reconnect, rejoin the room if we were in one
+        Thread.sleep(1000) // give WS time to open
+        val code = currentRoomCode
+        val url = currentRoomUrl
+        if (code != null && !currentIsHost) {
+            send("join-room", "code" to code)
+        } else if (url != null && currentIsHost) {
+            send("create-room", "url" to url)
+        }
+    }.also { it.isDaemon = true; it.start() }
+}
 
     fun disconnect() {
-        ws?.close()
-        ws = null
-    }
+    listening = false
+    writer?.close()
+    reader?.close()
+    socket?.close() // ← always null
+	}
 	
 }

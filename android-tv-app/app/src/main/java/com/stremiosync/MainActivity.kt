@@ -31,7 +31,7 @@ class MainActivity : FragmentActivity() {
         joinBtn = findViewById(R.id.joinBtn)
         peerStatus = findViewById(R.id.peerStatus)
 
-        syncManager = SyncManager(SyncManager.SERVER_URL)
+        syncManager = SyncManager.getInstance()
         setupSyncListeners()
         syncManager.connect()
 
@@ -121,6 +121,8 @@ class MainActivity : FragmentActivity() {
                         data.get("message")?.asString ?: "Unknown error",
                         Toast.LENGTH_LONG
                     ).show()
+					joinBtn.isEnabled = true
+					joinBtn.text = "Join Room" 
                 }
             }
         }
