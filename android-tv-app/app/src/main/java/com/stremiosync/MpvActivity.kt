@@ -132,7 +132,7 @@ class MpvActivity : FragmentActivity() {
                         Toast.makeText(this, "Partner disconnected", Toast.LENGTH_SHORT).show()
                     }
                 }
-                handler.postDelayed({ isSyncing = false }, 500)
+                handler.postDelayed({ isSyncing = false }, 1500)
             }
         }
     }
@@ -141,7 +141,6 @@ class MpvActivity : FragmentActivity() {
         super.onDestroy()
         handler.removeCallbacks(timestampPoller)
         player.release()
-        syncManager.disconnect()
     }
 
     override fun onPause() {
@@ -151,6 +150,5 @@ class MpvActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        player.play()
     }
 }
