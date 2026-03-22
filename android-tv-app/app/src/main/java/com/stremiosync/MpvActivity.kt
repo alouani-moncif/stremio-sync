@@ -4,6 +4,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.widget.FrameLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.FragmentActivity
 import androidx.media3.common.MediaItem
@@ -11,21 +13,29 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import android.util.Log
+import android.graphics.Color
+import android.view.Gravity
 
 class MpvActivity : FragmentActivity() {
 
     private lateinit var syncManager: SyncManager
     private lateinit var player: ExoPlayer
     private lateinit var playerView: PlayerView
+    private lateinit var statusOverlay: TextView
 
+    // When true, player events are ignored — sync commands are in control
     private var isSyncing = false
+
+    // Tracks last known timestamp for sending to server
     private var lastTimestamp = 0.0
+
     private val handler = Handler(Looper.getMainLooper())
 
-    // Safety timeout — if play never comes back, unfreeze after 5s
-    private val syncTimeoutRunnable = Runnable {
-        Log.w("MpvActivity", "Sync timeout — unfreezing")
+    // Safety valve — if we sent ready but never got play back, unfreeze after 8s
+    private val readyTimeoutRunnable = Runnable {
+        Log.w("MpvActivity", "Ready timeout — partner may be offline, unfreezing")
         isSyncing = false
+        showStatus("")
     }
 
     private val timestampPoller = object : Runnable {
@@ -33,18 +43,18 @@ class MpvActivity : FragmentActivity() {
             if (player.isPlaying) {
                 lastTimestamp = player.currentPosition / 1000.0
             }
-            handler.postDelayed(this, 1000)
+            handler.postDelayed(this, 500)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        Log.d("TEST", "MpvActivity started")
+        Log.d("MpvActivity", "MpvActivity started")
 
         val url = intent.getStringExtra("url") ?: return finish()
 
-        Log.d("TEST", "URL: $url")
+        Log.d("MpvActivity", "URL: $url")
 
         window.decorView.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_FULLSCREEN or
@@ -52,9 +62,31 @@ class MpvActivity : FragmentActivity() {
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         )
 
-        playerView = PlayerView(this)
-        setContentView(playerView)
+        // Root layout: player + status overlay on top
+        val root = FrameLayout(this)
+        setContentView(root)
 
+        playerView = PlayerView(this)
+        root.addView(playerView, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        // Status overlay for "Waiting for partner..." etc.
+        statusOverlay = TextView(this).apply {
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.argb(180, 0, 0, 0))
+            setPadding(32, 16, 32, 16)
+            visibility = View.GONE
+        }
+        val overlayParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = Gravity.CENTER }
+        root.addView(statusOverlay, overlayParams)
+
+        // Build ExoPlayer with generous buffer settings
         player = ExoPlayer.Builder(this)
             .setLoadControl(
                 androidx.media3.exoplayer.DefaultLoadControl.Builder()
@@ -65,23 +97,27 @@ class MpvActivity : FragmentActivity() {
         playerView.player = player
         playerView.useController = true
 
+        // Load video but DO NOT autoplay — wait for server to say play
         val mediaItem = MediaItem.fromUri(url)
         player.setMediaItem(mediaItem)
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = false
 
         syncManager = SyncManager.getInstance()
         setupPlayerListeners()
         setupSyncListeners()
 
         handler.post(timestampPoller)
+
+        showStatus("⏳ Connecting...")
     }
 
-    private fun setSyncing(value: Boolean, timeoutMs: Long = 0) {
-        isSyncing = value
-        handler.removeCallbacks(syncTimeoutRunnable)
-        if (value && timeoutMs > 0) {
-            handler.postDelayed(syncTimeoutRunnable, timeoutMs)
+    private fun showStatus(msg: String) {
+        if (msg.isEmpty()) {
+            statusOverlay.visibility = View.GONE
+        } else {
+            statusOverlay.text = msg
+            statusOverlay.visibility = View.VISIBLE
         }
     }
 
@@ -90,25 +126,42 @@ class MpvActivity : FragmentActivity() {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isSyncing) return
+
                 lastTimestamp = player.currentPosition / 1000.0
+
                 if (isPlaying) {
-                    // Pause immediately, send ready, wait for server to coordinate play
+                    // User pressed play — freeze player and coordinate with server
                     player.pause()
-                    setSyncing(true, 5000) // 5s safety timeout in case partner never responds
-                    syncManager.bufferingEnd(lastTimestamp)
+                    isSyncing = true
+                    showStatus("⏳ Waiting for partner...")
+                    // Cancel any previous ready timeout
+                    handler.removeCallbacks(readyTimeoutRunnable)
+                    handler.postDelayed(readyTimeoutRunnable, 8000)
                     syncManager.ready(lastTimestamp)
-                    Log.d("MpvActivity", "Sent ready at $lastTimestamp")
+                    Log.d("MpvActivity", "User play → sent ready at $lastTimestamp")
                 } else {
+                    // User pressed pause
                     syncManager.pause(lastTimestamp)
                 }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (isSyncing) return
-                if (playbackState == Player.STATE_BUFFERING) {
-                    syncManager.bufferingStart(lastTimestamp)
+                when (playbackState) {
+                    Player.STATE_BUFFERING -> {
+                        showStatus("⏳ Buffering...")
+                        syncManager.bufferingStart(lastTimestamp)
+                    }
+                    Player.STATE_READY -> {
+                        // Only send bufferingEnd if we were actually buffering
+                        // (not on initial load)
+                        if (player.isPlaying) {
+                            showStatus("")
+                            syncManager.bufferingEnd(lastTimestamp)
+                        }
+                    }
+                    else -> {}
                 }
-                // STATE_READY intentionally ignored
             }
         })
     }
@@ -116,46 +169,66 @@ class MpvActivity : FragmentActivity() {
     private fun setupSyncListeners() {
         syncManager.setListener { event, data ->
             runOnUiThread {
+                Log.d("MpvActivity", "Sync event: $event")
                 when (event) {
                     "play" -> {
                         val ts = data.get("timestamp")?.asDouble ?: 0.0
-                        setSyncing(true, 2000)
+                        handler.removeCallbacks(readyTimeoutRunnable)
+                        isSyncing = true
                         player.seekTo((ts * 1000).toLong())
                         player.play()
-                        handler.postDelayed({ setSyncing(false) }, 1500)
+                        showStatus("")
+                        // Release sync lock after seek+play settles
+                        handler.postDelayed({
+                            isSyncing = false
+                        }, 1500)
                     }
                     "pause" -> {
                         val ts = data.get("timestamp")?.asDouble ?: 0.0
-                        setSyncing(true, 2000)
+                        isSyncing = true
                         player.seekTo((ts * 1000).toLong())
                         player.pause()
-                        handler.postDelayed({ setSyncing(false) }, 1500)
+                        showStatus("")
+                        handler.postDelayed({ isSyncing = false }, 1500)
                     }
                     "seek" -> {
                         val ts = data.get("timestamp")?.asDouble ?: 0.0
-                        setSyncing(true, 2000)
+                        isSyncing = true
                         player.seekTo((ts * 1000).toLong())
-                        handler.postDelayed({ setSyncing(false) }, 1500)
+                        handler.postDelayed({ isSyncing = false }, 1500)
                     }
                     "buffering-start" -> {
-                        setSyncing(true, 30000) // long timeout for buffering
+                        isSyncing = true
                         player.pause()
-                        Toast.makeText(this, "Partner buffering...", Toast.LENGTH_SHORT).show()
+                        showStatus("⏳ Partner is buffering...")
                     }
                     "buffering-end-all" -> {
                         val ts = data.get("timestamp")?.asDouble ?: lastTimestamp
-                        setSyncing(true, 2000)
                         player.seekTo((ts * 1000).toLong())
                         player.play()
-                        handler.postDelayed({ setSyncing(false) }, 1500)
+                        showStatus("")
+                        handler.postDelayed({ isSyncing = false }, 1500)
                     }
                     "peer-ready" -> {
-                        // Partner is ready, server will send play shortly — nothing to do
-                        Log.d("MpvActivity", "Partner is ready")
+                        showStatus("⏳ Partner is ready, starting soon...")
+                    }
+                    "peer-connected" -> {
+                        showStatus("✓ Partner connected")
+                        handler.postDelayed({ showStatus("") }, 2000)
                     }
                     "peer-disconnected" -> {
-                        setSyncing(false) // unfreeze if waiting for partner
-                        Toast.makeText(this, "Partner disconnected", Toast.LENGTH_SHORT).show()
+                        // Unfreeze immediately — no point waiting
+                        handler.removeCallbacks(readyTimeoutRunnable)
+                        isSyncing = false
+                        showStatus("⚠️ Partner disconnected")
+                        handler.postDelayed({ showStatus("") }, 3000)
+                    }
+                    "connected" -> {
+                        showStatus("✓ Connected to server")
+                        handler.postDelayed({ showStatus("") }, 2000)
+                    }
+                    "disconnected" -> {
+                        showStatus("⚠️ Reconnecting...")
                     }
                 }
             }
@@ -165,17 +238,17 @@ class MpvActivity : FragmentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(timestampPoller)
-        handler.removeCallbacks(syncTimeoutRunnable)
+        handler.removeCallbacks(readyTimeoutRunnable)
         player.release()
     }
 
     override fun onPause() {
         super.onPause()
-        // do not pause — sync controls playback state
+        // do not touch player — sync controls playback
     }
 
     override fun onResume() {
         super.onResume()
-        // do NOT auto-play — sync state controls playback
+        // do not touch player — sync controls playback
     }
 }

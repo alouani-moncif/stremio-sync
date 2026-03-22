@@ -11,13 +11,28 @@ const MPV_PIPE = `\\\\.\\pipe\\stremio-sync-mpv-${Date.now()}`;
 
 // ─── State ───────────────────────────────────────────────────────────────────
 let bufferDebounce = null;
-let mpvReady = false;
+let mpvReady = false;        // true once MPV IPC is connected and stream loaded
 let mainWindow = null;
 let mpvProcess = null;
 let mpvSocket = null;
 let syncSocket = null;
-let syncingEvent = null;
 let mpvCommandQueue = [];
+
+// Tracks last sent pause state to avoid echo loops
+let lastSentPause = null;
+
+// When true, MPV property-change events are ignored
+// (we triggered the change ourselves from a sync event)
+let ignoreMpvEvents = false;
+let ignoreMpvEventsTimer = null;
+
+function setIgnoreMpvEvents(ms) {
+  ignoreMpvEvents = true;
+  clearTimeout(ignoreMpvEventsTimer);
+  ignoreMpvEventsTimer = setTimeout(() => {
+    ignoreMpvEvents = false;
+  }, ms);
+}
 
 // ─── Register as stremio:// protocol handler ─────────────────────────────────
 if (process.defaultApp) {
@@ -60,9 +75,7 @@ function handleStremioUrl(stremioUrl) {
   try {
     const parsed = new URL(stremioUrl);
     const streamUrl = parsed.searchParams.get("streamUrl");
-    if (streamUrl) {
-      mainWindow?.webContents.send("stream-intercepted", streamUrl);
-    }
+    if (streamUrl) mainWindow?.webContents.send("stream-intercepted", streamUrl);
   } catch (e) {
     console.error("Failed to parse stremio URL:", e);
   }
@@ -76,11 +89,12 @@ function launchMpv(url) {
   }
 
   mpvReady = false;
+  lastSentPause = null;
 
   mpvProcess = spawn(MPV_PATH, [
     url,
     `--input-ipc-server=${MPV_PIPE}`,
-    "--pause",
+    "--pause",         // always start paused — sync will control playback
     "--no-terminal",
     "--force-window=yes",
   ]);
@@ -107,7 +121,11 @@ function connectMpvIpc() {
     sendMpvCommand({ command: ["observe_property", 1, "pause"] });
     sendMpvCommand({ command: ["observe_property", 2, "time-pos"] });
     sendMpvCommand({ command: ["observe_property", 3, "paused-for-cache"] });
-    setTimeout(() => { mpvReady = true; console.log("MPV ready for sync"); }, 3000);
+    // Give stream time to load before allowing sync events
+    setTimeout(() => {
+      mpvReady = true;
+      console.log("MPV ready for sync");
+    }, 3000);
   });
 
   mpvSocket.on("data", (data) => {
@@ -138,35 +156,36 @@ function sendMpvCommand(cmd) {
 }
 
 // ─── Handle MPV events → send to sync server ─────────────────────────────────
-let lastPause = null;
 let lastTimestamp = 0;
 
 function handleMpvEvent(msg) {
   if (msg.event !== "property-change") return;
+  if (!mpvReady) return;
+  if (ignoreMpvEvents) return;
 
   if (msg.name === "pause") {
-    if (!mpvReady) return;
-    // Ignore if this pause was triggered by sync (avoid echo loop)
-    if (syncingEvent === "play" || syncingEvent === "pause" ||
-        syncingEvent === "ready" || syncingEvent === "buffering-start") return;
-
     const paused = msg.data;
-    if (paused === lastPause) return;
-    lastPause = paused;
+    if (paused === lastSentPause) return; // no change, ignore
 
     if (!paused) {
-      // User pressed play — pause immediately and send ready to coordinate
+      // User pressed play in MPV — pause it back and send ready
+      setIgnoreMpvEvents(2000);
       sendMpvCommand({ command: ["set_property", "pause", true] });
+      lastSentPause = true;
       sendSync({ event: "ready", timestamp: lastTimestamp });
-      console.log("Sent ready at", lastTimestamp);
+      console.log("User play → sent ready at", lastTimestamp);
+      mainWindow?.webContents.send("waiting-for-partner");
     } else {
+      // User pressed pause
+      lastSentPause = true;
       sendSync({ event: "pause", timestamp: lastTimestamp });
     }
   }
 
   if (msg.name === "time-pos" && msg.data != null) {
     const newTimestamp = msg.data;
-    if (Math.abs(newTimestamp - lastTimestamp) > 3 && syncingEvent !== "seek") {
+    // Only send seek if jump is large enough (user scrubbed)
+    if (Math.abs(newTimestamp - lastTimestamp) > 3) {
       sendSync({ event: "seek", timestamp: newTimestamp });
     }
     lastTimestamp = newTimestamp;
@@ -195,8 +214,12 @@ function connectSyncServer() {
   });
 
   syncSocket.on("message", (raw) => {
-    const msg = JSON.parse(raw);
-    handleSyncEvent(msg);
+    try {
+      const msg = JSON.parse(raw);
+      handleSyncEvent(msg);
+    } catch (e) {
+      console.error("Failed to parse sync message", e);
+    }
   });
 
   syncSocket.on("close", () => {
@@ -215,8 +238,7 @@ function sendSync(msg) {
 
 // ─── Handle sync server events → control MPV ─────────────────────────────────
 function handleSyncEvent(msg) {
-  syncingEvent = msg.event;
-  setTimeout(() => { syncingEvent = null; }, 2000);
+  console.log("Sync event:", msg.event);
 
   switch (msg.event) {
     case "room-created":
@@ -232,41 +254,52 @@ function handleSyncEvent(msg) {
       mainWindow?.webContents.send("peer-connected");
       break;
 
-    case "peer-disconnected":
-      mainWindow?.webContents.send("peer-disconnected");
-      break;
-
     case "peer-ready":
       mainWindow?.webContents.send("peer-ready");
       break;
 
+    case "peer-disconnected":
+      // Unfreeze — no point waiting for partner anymore
+      setIgnoreMpvEvents(0);
+      ignoreMpvEvents = false;
+      mainWindow?.webContents.send("peer-disconnected");
+      break;
+
     case "play":
+      // Server says everyone is ready — seek to timestamp and play
+      setIgnoreMpvEvents(2000);
+      lastSentPause = false;
       sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
       sendMpvCommand({ command: ["set_property", "pause", false] });
-      lastPause = false;
+      mainWindow?.webContents.send("play", msg.timestamp);
       break;
 
     case "pause":
+      setIgnoreMpvEvents(2000);
+      lastSentPause = true;
       sendMpvCommand({ command: ["set_property", "pause", true] });
-      lastPause = true;
+      mainWindow?.webContents.send("pause", msg.timestamp);
       break;
 
     case "seek":
       if (mpvReady) {
+        setIgnoreMpvEvents(1000);
         sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
       }
       break;
 
     case "buffering-start":
+      setIgnoreMpvEvents(30000); // hold until buffering-end-all
+      lastSentPause = true;
       sendMpvCommand({ command: ["set_property", "pause", true] });
-      lastPause = true;
       mainWindow?.webContents.send("peer-buffering", true);
       break;
 
     case "buffering-end-all":
+      setIgnoreMpvEvents(2000);
+      lastSentPause = false;
       sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
       sendMpvCommand({ command: ["set_property", "pause", false] });
-      lastPause = false;
       mainWindow?.webContents.send("peer-buffering", false);
       break;
 
@@ -278,9 +311,7 @@ function handleSyncEvent(msg) {
 
 // ─── Heartbeat ───────────────────────────────────────────────────────────────
 function startHeartbeat() {
-  setInterval(() => {
-    sendSync({ event: "ping" });
-  }, 30000);
+  setInterval(() => sendSync({ event: "ping" }), 30000);
 }
 
 // ─── IPC from renderer ───────────────────────────────────────────────────────

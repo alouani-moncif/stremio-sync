@@ -41,32 +41,36 @@ function cleanupClient(clientId, roomCode) {
   room.bufferingClients.delete(clientId);
   room.readyClients.delete(clientId);
 
-  // If someone was waiting for this client to be ready, unblock them
-  if (room.readyClients.size > 0 && room.readyClients.size >= room.clients.size) {
-    const ts = room.timestamp;
-    room.readyClients.clear();
-    broadcastToAll(roomCode, { event: "play", timestamp: ts });
+  if (room.clients.size === 0) {
+    delete rooms[roomCode];
+    console.log(`Room ${roomCode} deleted (empty)`);
+    return;
   }
 
-  // If someone was buffering and this client disconnects, unblock
-  if (room.bufferingClients.size === 0 && room.clients.size > 0) {
-    broadcastToAll(roomCode, { event: "buffering-end-all", timestamp: room.timestamp });
-  }
-
+  // Notify remaining client
   broadcastToAll(roomCode, {
     event: "peer-disconnected",
     clientId,
     peerCount: room.clients.size,
   });
 
-  if (room.clients.size === 0) {
-    delete rooms[roomCode];
-    console.log(`Room ${roomCode} deleted (empty)`);
+  // If remaining client was waiting for ready, unblock them immediately
+  if (room.readyClients.size > 0) {
+    console.log(`Room ${roomCode}: partner left while ready pending — firing play`);
+    room.readyClients.clear();
+    room.state = "playing";
+    broadcastToAll(roomCode, { event: "play", timestamp: room.timestamp });
+  }
+
+  // If remaining client was waiting on buffering, unblock
+  if (room.bufferingClients.size === 0) {
+    // only unblock if we were actually in a buffering-start state
+    // (don't fire spurious buffering-end-all on random disconnects)
   }
 }
 
 wss.on("connection", (ws) => {
-  let clientId = uuidv4();
+  const clientId = uuidv4();
   let currentRoom = null;
 
   console.log(`Client connected: ${clientId}`);
@@ -81,29 +85,6 @@ wss.on("connection", (ws) => {
     }
 
     switch (msg.event) {
-
-      // ─── READY TO PLAY ───────────────────────────────────────────────
-      case "ready": {
-        if (!currentRoom || !rooms[currentRoom]) return;
-        const room = rooms[currentRoom];
-        room.readyClients.add(clientId);
-
-        console.log(`Client ${clientId} ready in room ${currentRoom} (${room.readyClients.size}/${room.clients.size})`);
-
-        // Tell the other peer we're ready
-        broadcastToRoom(currentRoom, clientId, { event: "peer-ready" });
-
-        // Fire play only when ALL clients are ready
-        if (room.readyClients.size >= room.clients.size) {
-          room.readyClients.clear();
-          room.bufferingClients.clear(); // clear any stale buffering state
-          room.state = "playing";
-          room.timestamp = msg.timestamp;
-          broadcastToAll(currentRoom, { event: "play", timestamp: msg.timestamp });
-          console.log(`Room ${currentRoom}: all ready, firing play at ${msg.timestamp}`);
-        }
-        break;
-      }
 
       // ─── HOST CREATES ROOM ───────────────────────────────────────────
       case "create-room": {
@@ -155,14 +136,37 @@ wss.on("connection", (ws) => {
         break;
       }
 
+      // ─── READY TO PLAY ───────────────────────────────────────────────
+      case "ready": {
+        if (!currentRoom || !rooms[currentRoom]) return;
+        const room = rooms[currentRoom];
+
+        room.readyClients.add(clientId);
+        room.timestamp = msg.timestamp; // update timestamp from whoever just sent ready
+
+        console.log(`Room ${currentRoom}: ${room.readyClients.size}/${room.clients.size} ready`);
+
+        // Tell partner this client is ready
+        broadcastToRoom(currentRoom, clientId, { event: "peer-ready" });
+
+        // Fire play when ALL clients are ready
+        if (room.readyClients.size >= room.clients.size) {
+          room.readyClients.clear();
+          room.bufferingClients.clear();
+          room.state = "playing";
+          console.log(`Room ${currentRoom}: all ready → play at ${room.timestamp}`);
+          broadcastToAll(currentRoom, { event: "play", timestamp: room.timestamp });
+        }
+        break;
+      }
+
       // ─── PAUSE ───────────────────────────────────────────────────────
       case "pause": {
         if (!currentRoom || !rooms[currentRoom]) return;
         const room = rooms[currentRoom];
         room.state = "paused";
         room.timestamp = msg.timestamp;
-        // Cancel any pending ready state
-        room.readyClients.clear();
+        room.readyClients.clear(); // cancel any pending ready coordination
         broadcastToRoom(currentRoom, clientId, {
           event: "pause",
           timestamp: msg.timestamp,
@@ -184,16 +188,18 @@ wss.on("connection", (ws) => {
       // ─── BUFFERING ───────────────────────────────────────────────────
       case "buffering-start": {
         if (!currentRoom || !rooms[currentRoom]) return;
-        rooms[currentRoom].bufferingClients.add(clientId);
-        rooms[currentRoom].readyClients.clear(); // cancel any pending ready
+        const room = rooms[currentRoom];
+        room.bufferingClients.add(clientId);
+        room.readyClients.clear(); // cancel any pending ready
         broadcastToAll(currentRoom, { event: "buffering-start", clientId });
         break;
       }
 
       case "buffering-end": {
         if (!currentRoom || !rooms[currentRoom]) return;
-        rooms[currentRoom].bufferingClients.delete(clientId);
-        if (rooms[currentRoom].bufferingClients.size === 0) {
+        const room = rooms[currentRoom];
+        room.bufferingClients.delete(clientId);
+        if (room.bufferingClients.size === 0) {
           broadcastToAll(currentRoom, {
             event: "buffering-end-all",
             timestamp: msg.timestamp,
