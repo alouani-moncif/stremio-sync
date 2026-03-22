@@ -82,7 +82,6 @@ class MpvActivity : FragmentActivity() {
         handler.post(timestampPoller)
     }
 
-    setupPlayerListeners
 
     private fun setupSyncListeners() {
         syncManager.setListener { event, data ->
