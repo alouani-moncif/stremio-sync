@@ -12,16 +12,22 @@ typealias SyncEventListener = (event: String, data: JsonObject) -> Unit
 class SyncManager(private val serverUrl: String) {
 
     companion object {
-        const val TAG = "SyncManager"
-        const val SERVER_URL = "ws://192.168.11.103:3000"
-		
-		
-		private var instance: SyncManager? = null
-		fun getInstance(): SyncManager {
-			if (instance == null) instance = SyncManager(SERVER_URL)
-			return instance!!
-		}
+    const val TAG = "SyncManager"
+    const val SERVER_URL = "ws://192.168.11.103:3000"
+
+    // Singleton so MpvActivity reuses the same connected instance
+    @Volatile private var instance: SyncManager? = null
+    fun getInstance(): SyncManager {
+        return instance ?: synchronized(this) {
+            instance ?: SyncManager(SERVER_URL).also { instance = it }
+        }
     }
+}
+
+// Add these fields alongside the existing ones:
+private var currentRoomCode: String? = null
+private var currentRoomUrl: String? = null
+private var currentIsHost: Boolean = false
 
     private val gson = Gson()
     private var ws: WebSocketClient? = null
@@ -33,16 +39,16 @@ class SyncManager(private val serverUrl: String) {
 	private var currentIsHost: Boolean = false
 
 	fun createRoom(url: String) {
-		currentRoomUrl = url
-		currentIsHost = true
-		send("create-room", "url" to url)
-	}
+    currentRoomUrl = url
+    currentIsHost = true
+    send("create-room", "url" to url)
+}
 
-	fun joinRoom(code: String) {
-		currentRoomCode = code
-		currentIsHost = false
-		send("join-room", "code" to code)
-	}
+fun joinRoom(code: String) {
+    currentRoomCode = code
+    currentIsHost = false
+    send("join-room", "code" to code)
+}
 
     fun setListener(l: SyncEventListener) {
         listener = l
@@ -115,13 +121,12 @@ class SyncManager(private val serverUrl: String) {
     reconnectJob = Thread {
         Thread.sleep(3000)
         connect()
-        // After reconnect, rejoin the room if we were in one
-        Thread.sleep(1000) // give WS time to open
+        Thread.sleep(1000) // wait for WS to open
         val code = currentRoomCode
         val url = currentRoomUrl
-        if (code != null && !currentIsHost) {
+        if (!currentIsHost && code != null) {
             send("join-room", "code" to code)
-        } else if (url != null && currentIsHost) {
+        } else if (currentIsHost && url != null) {
             send("create-room", "url" to url)
         }
     }.also { it.isDaemon = true; it.start() }
