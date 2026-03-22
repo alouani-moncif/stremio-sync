@@ -22,6 +22,12 @@ class MpvActivity : FragmentActivity() {
     private var lastTimestamp = 0.0
     private val handler = Handler(Looper.getMainLooper())
 
+    // Safety timeout — if play never comes back, unfreeze after 5s
+    private val syncTimeoutRunnable = Runnable {
+        Log.w("MpvActivity", "Sync timeout — unfreezing")
+        isSyncing = false
+    }
+
     private val timestampPoller = object : Runnable {
         override fun run() {
             if (player.isPlaying) {
@@ -40,18 +46,15 @@ class MpvActivity : FragmentActivity() {
 
         Log.d("TEST", "URL: $url")
 
-        // Fullscreen
         window.decorView.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_FULLSCREEN or
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         )
 
-        // Setup PlayerView
         playerView = PlayerView(this)
         setContentView(playerView)
 
-        // Setup ExoPlayer
         player = ExoPlayer.Builder(this)
             .setLoadControl(
                 androidx.media3.exoplayer.DefaultLoadControl.Builder()
@@ -62,37 +65,43 @@ class MpvActivity : FragmentActivity() {
         playerView.player = player
         playerView.useController = true
 
-        // Load video
         val mediaItem = MediaItem.fromUri(url)
         player.setMediaItem(mediaItem)
         player.prepare()
         player.playWhenReady = true
 
-        // Setup sync — reuse existing connected singleton
         syncManager = SyncManager.getInstance()
         setupPlayerListeners()
         setupSyncListeners()
 
-        // Start timestamp polling
         handler.post(timestampPoller)
+    }
+
+    private fun setSyncing(value: Boolean, timeoutMs: Long = 0) {
+        isSyncing = value
+        handler.removeCallbacks(syncTimeoutRunnable)
+        if (value && timeoutMs > 0) {
+            handler.postDelayed(syncTimeoutRunnable, timeoutMs)
+        }
     }
 
     private fun setupPlayerListeners() {
         player.addListener(object : Player.Listener {
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-    if (isSyncing) return
-    lastTimestamp = player.currentPosition / 1000.0
-    if (isPlaying) {
-        // Don't play yet — pause and signal ready, wait for server to say play
-        player.pause()
-        isSyncing = true
-        syncManager.bufferingEnd(lastTimestamp)
-        syncManager.ready(lastTimestamp)
-    } else {
-        syncManager.pause(lastTimestamp)
-    }
-}
+                if (isSyncing) return
+                lastTimestamp = player.currentPosition / 1000.0
+                if (isPlaying) {
+                    // Pause immediately, send ready, wait for server to coordinate play
+                    player.pause()
+                    setSyncing(true, 5000) // 5s safety timeout in case partner never responds
+                    syncManager.bufferingEnd(lastTimestamp)
+                    syncManager.ready(lastTimestamp)
+                    Log.d("MpvActivity", "Sent ready at $lastTimestamp")
+                } else {
+                    syncManager.pause(lastTimestamp)
+                }
+            }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (isSyncing) return
@@ -107,36 +116,48 @@ class MpvActivity : FragmentActivity() {
     private fun setupSyncListeners() {
         syncManager.setListener { event, data ->
             runOnUiThread {
-                isSyncing = true
                 when (event) {
                     "play" -> {
                         val ts = data.get("timestamp")?.asDouble ?: 0.0
+                        setSyncing(true, 2000)
                         player.seekTo((ts * 1000).toLong())
                         player.play()
+                        handler.postDelayed({ setSyncing(false) }, 1500)
                     }
                     "pause" -> {
                         val ts = data.get("timestamp")?.asDouble ?: 0.0
+                        setSyncing(true, 2000)
                         player.seekTo((ts * 1000).toLong())
                         player.pause()
+                        handler.postDelayed({ setSyncing(false) }, 1500)
                     }
                     "seek" -> {
                         val ts = data.get("timestamp")?.asDouble ?: 0.0
+                        setSyncing(true, 2000)
                         player.seekTo((ts * 1000).toLong())
+                        handler.postDelayed({ setSyncing(false) }, 1500)
                     }
                     "buffering-start" -> {
+                        setSyncing(true, 30000) // long timeout for buffering
                         player.pause()
                         Toast.makeText(this, "Partner buffering...", Toast.LENGTH_SHORT).show()
                     }
                     "buffering-end-all" -> {
                         val ts = data.get("timestamp")?.asDouble ?: lastTimestamp
+                        setSyncing(true, 2000)
                         player.seekTo((ts * 1000).toLong())
                         player.play()
+                        handler.postDelayed({ setSyncing(false) }, 1500)
+                    }
+                    "peer-ready" -> {
+                        // Partner is ready, server will send play shortly — nothing to do
+                        Log.d("MpvActivity", "Partner is ready")
                     }
                     "peer-disconnected" -> {
+                        setSyncing(false) // unfreeze if waiting for partner
                         Toast.makeText(this, "Partner disconnected", Toast.LENGTH_SHORT).show()
                     }
                 }
-                handler.postDelayed({ isSyncing = false }, 1500)
             }
         }
     }
@@ -144,8 +165,8 @@ class MpvActivity : FragmentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacks(timestampPoller)
+        handler.removeCallbacks(syncTimeoutRunnable)
         player.release()
-        // do NOT call syncManager.disconnect() — MainActivity owns the singleton
     }
 
     override fun onPause() {

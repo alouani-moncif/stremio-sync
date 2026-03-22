@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require("uuid");
 const PORT = process.env.PORT || 3000;
 const wss = new WebSocket.Server({ port: PORT });
 
-// rooms[code] = { url, state, timestamp, bufferingClients: Set, clients: Map<id, ws> }
+// rooms[code] = { url, state, timestamp, bufferingClients, readyClients, clients, host }
 const rooms = {};
 
 function generateCode() {
@@ -39,6 +39,19 @@ function cleanupClient(clientId, roomCode) {
 
   room.clients.delete(clientId);
   room.bufferingClients.delete(clientId);
+  room.readyClients.delete(clientId);
+
+  // If someone was waiting for this client to be ready, unblock them
+  if (room.readyClients.size > 0 && room.readyClients.size >= room.clients.size) {
+    const ts = room.timestamp;
+    room.readyClients.clear();
+    broadcastToAll(roomCode, { event: "play", timestamp: ts });
+  }
+
+  // If someone was buffering and this client disconnects, unblock
+  if (room.bufferingClients.size === 0 && room.clients.size > 0) {
+    broadcastToAll(roomCode, { event: "buffering-end-all", timestamp: room.timestamp });
+  }
 
   broadcastToAll(roomCode, {
     event: "peer-disconnected",
@@ -46,12 +59,10 @@ function cleanupClient(clientId, roomCode) {
     peerCount: room.clients.size,
   });
 
-  // Delete room if empty
   if (room.clients.size === 0) {
     delete rooms[roomCode];
     console.log(`Room ${roomCode} deleted (empty)`);
   }
-  if (room.readyClients) room.readyClients.delete(clientId);
 }
 
 wss.on("connection", (ws) => {
@@ -70,31 +81,29 @@ wss.on("connection", (ws) => {
     }
 
     switch (msg.event) {
-		
-	case "ready": {
-    if (!currentRoom || !rooms[currentRoom]) return;
-    if (!rooms[currentRoom].readyClients) {
-        rooms[currentRoom].readyClients = new Set();
-    }
-    rooms[currentRoom].readyClients.add(clientId);
-    
-    // Tell the other peer we're ready
-    broadcastToRoom(currentRoom, clientId, {
-        event: "peer-ready"
-    });
 
-    // If everyone is ready, fire play to all
-    if (rooms[currentRoom].readyClients.size >= rooms[currentRoom].clients.size) {
-        rooms[currentRoom].readyClients.clear();
-        const ts = msg.timestamp;
-        rooms[currentRoom].timestamp = ts;
-        broadcastToAll(currentRoom, {
-            event: "play",
-            timestamp: ts,
-        });
-    }
-    break;
-}
+      // ─── READY TO PLAY ───────────────────────────────────────────────
+      case "ready": {
+        if (!currentRoom || !rooms[currentRoom]) return;
+        const room = rooms[currentRoom];
+        room.readyClients.add(clientId);
+
+        console.log(`Client ${clientId} ready in room ${currentRoom} (${room.readyClients.size}/${room.clients.size})`);
+
+        // Tell the other peer we're ready
+        broadcastToRoom(currentRoom, clientId, { event: "peer-ready" });
+
+        // Fire play only when ALL clients are ready
+        if (room.readyClients.size >= room.clients.size) {
+          room.readyClients.clear();
+          room.bufferingClients.clear(); // clear any stale buffering state
+          room.state = "playing";
+          room.timestamp = msg.timestamp;
+          broadcastToAll(currentRoom, { event: "play", timestamp: msg.timestamp });
+          console.log(`Room ${currentRoom}: all ready, firing play at ${msg.timestamp}`);
+        }
+        break;
+      }
 
       // ─── HOST CREATES ROOM ───────────────────────────────────────────
       case "create-room": {
@@ -104,6 +113,7 @@ wss.on("connection", (ws) => {
           state: "paused",
           timestamp: 0,
           bufferingClients: new Set(),
+          readyClients: new Set(),
           clients: new Map([[clientId, ws]]),
           host: clientId,
         };
@@ -127,7 +137,6 @@ wss.on("connection", (ws) => {
         room.clients.set(clientId, ws);
         currentRoom = msg.code;
 
-        // Send room state to guest so they can start playback
         ws.send(JSON.stringify({
           event: "room-joined",
           code: msg.code,
@@ -137,7 +146,6 @@ wss.on("connection", (ws) => {
           timestamp: room.timestamp,
         }));
 
-        // Notify host that guest joined
         broadcastToRoom(msg.code, clientId, {
           event: "peer-connected",
           peerCount: room.clients.size,
@@ -147,23 +155,14 @@ wss.on("connection", (ws) => {
         break;
       }
 
-      // ─── PLAY ────────────────────────────────────────────────────────
-      case "play": {
-        if (!currentRoom || !rooms[currentRoom]) return;
-        rooms[currentRoom].state = "playing";
-        rooms[currentRoom].timestamp = msg.timestamp;
-        broadcastToRoom(currentRoom, clientId, {
-          event: "play",
-          timestamp: msg.timestamp,
-        });
-        break;
-      }
-
       // ─── PAUSE ───────────────────────────────────────────────────────
       case "pause": {
         if (!currentRoom || !rooms[currentRoom]) return;
-        rooms[currentRoom].state = "paused";
-        rooms[currentRoom].timestamp = msg.timestamp;
+        const room = rooms[currentRoom];
+        room.state = "paused";
+        room.timestamp = msg.timestamp;
+        // Cancel any pending ready state
+        room.readyClients.clear();
         broadcastToRoom(currentRoom, clientId, {
           event: "pause",
           timestamp: msg.timestamp,
@@ -186,18 +185,14 @@ wss.on("connection", (ws) => {
       case "buffering-start": {
         if (!currentRoom || !rooms[currentRoom]) return;
         rooms[currentRoom].bufferingClients.add(clientId);
-        // Tell everyone to pause and wait
-        broadcastToAll(currentRoom, {
-          event: "buffering-start",
-          clientId,
-        });
+        rooms[currentRoom].readyClients.clear(); // cancel any pending ready
+        broadcastToAll(currentRoom, { event: "buffering-start", clientId });
         break;
       }
 
       case "buffering-end": {
         if (!currentRoom || !rooms[currentRoom]) return;
         rooms[currentRoom].bufferingClients.delete(clientId);
-        // Only resume if nobody is buffering
         if (rooms[currentRoom].bufferingClients.size === 0) {
           broadcastToAll(currentRoom, {
             event: "buffering-end-all",
