@@ -29,10 +29,10 @@ class SyncManager(private val serverUrl: String) {
         ws = object : WebSocketClient(URI(serverUrl)) {
 
             override fun onOpen(handshake: ServerHandshake) {
-                Log.d(TAG, "Connected to sync server")
-                listener?.invoke("connected", JsonObject())
-                startHeartbeat()
-            }
+				Log.d(TAG, "✅ Connected to sync server: $serverUrl")
+				listener?.invoke("connected", JsonObject())
+				startHeartbeat()
+		}
 
             override fun onMessage(message: String) {
                 try {
@@ -45,16 +45,17 @@ class SyncManager(private val serverUrl: String) {
             }
 
             override fun onClose(code: Int, reason: String, remote: Boolean) {
-                Log.d(TAG, "Disconnected: $reason")
-                listener?.invoke("disconnected", JsonObject())
-                scheduleReconnect()
-            }
+				Log.d(TAG, "❌ Disconnected: code=$code reason=$reason")
+				listener?.invoke("disconnected", JsonObject())
+				scheduleReconnect()
+				}
 
             override fun onError(ex: Exception) {
                 Log.e(TAG, "WebSocket error", ex)
             }
         }
-        ws?.connect()
+        Log.d(TAG, "🔄 Connecting to: $serverUrl")
+		ws?.connect()
     }
 
     fun send(event: String, vararg pairs: Pair<String, Any>) {
@@ -98,4 +99,5 @@ class SyncManager(private val serverUrl: String) {
         ws?.close()
         ws = null
     }
+	
 }
