@@ -51,6 +51,8 @@ class MpvActivity : FragmentActivity() {
         }
 
         try {
+			android.util.Log.d("MpvActivity", "Socket path: ${getMpvSocketPath()}")
+			android.util.Log.d("MpvActivity", "MPV Intent: ${mpvIntent}")
             startActivity(mpvIntent)
         } catch (e: Exception) {
             Toast.makeText(this, "MPV for Android not installed. Install from GitHub.", Toast.LENGTH_LONG).show()

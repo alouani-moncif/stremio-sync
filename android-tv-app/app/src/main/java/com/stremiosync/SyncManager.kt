@@ -13,7 +13,7 @@ class SyncManager(private val serverUrl: String) {
 
     companion object {
         const val TAG = "SyncManager"
-        const val SERVER_URL = "wss://stremio-sync-server.onrender.com"
+        const val SERVER_URL = "ws://192.168.11.103:3000"
     }
 
     private val gson = Gson()
