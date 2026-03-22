@@ -3,10 +3,8 @@ package com.stremiosync
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.view.KeyEvent
 import android.widget.*
 import androidx.fragment.app.FragmentActivity
-import com.google.gson.JsonObject
 
 class MainActivity : FragmentActivity() {
 
@@ -53,7 +51,6 @@ class MainActivity : FragmentActivity() {
             joinBtn.text = "Joining..."
         }
 
-        // Handle intent (intercepted from Stremio or video URL)
         handleIntent(intent)
     }
 
@@ -66,9 +63,7 @@ class MainActivity : FragmentActivity() {
         val data: Uri? = intent.data
         if (data != null) {
             val streamUrl = when {
-                // stremio:// protocol
                 data.scheme == "stremio" -> data.getQueryParameter("streamUrl")
-                // Direct video URL (open with)
                 intent.type?.startsWith("video/") == true -> data.toString()
                 else -> null
             }
@@ -102,7 +97,6 @@ class MainActivity : FragmentActivity() {
                         roomCodeText.visibility = android.view.View.VISIBLE
                         peerStatus.text = "Waiting for partner..."
                         peerStatus.visibility = android.view.View.VISIBLE
-                        // Launch MPV
                         interceptedUrl?.let { launchMpvActivity(it, code, true) }
                     }
                     "room-joined" -> {
@@ -116,13 +110,15 @@ class MainActivity : FragmentActivity() {
                     "peer-disconnected" -> peerStatus.text = "Partner disconnected"
                     "buffering-start" -> peerStatus.text = "Partner buffering..."
                     "buffering-end-all" -> peerStatus.text = "Partner ready ✓"
-                    "error" -> Toast.makeText(
-                        this,
-                        data.get("message")?.asString ?: "Unknown error",
-                        Toast.LENGTH_LONG
-                    ).show()
-					joinBtn.isEnabled = true
-					joinBtn.text = "Join Room" 
+                    "error" -> {
+                        Toast.makeText(
+                            this,
+                            data.get("message")?.asString ?: "Unknown error",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        joinBtn.isEnabled = true
+                        joinBtn.text = "Join Room"
+                    }
                 }
             }
         }

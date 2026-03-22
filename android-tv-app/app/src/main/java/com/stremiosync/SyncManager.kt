@@ -12,43 +12,25 @@ typealias SyncEventListener = (event: String, data: JsonObject) -> Unit
 class SyncManager(private val serverUrl: String) {
 
     companion object {
-    const val TAG = "SyncManager"
-    const val SERVER_URL = "ws://192.168.11.103:3000"
+        const val TAG = "SyncManager"
+        const val SERVER_URL = "ws://192.168.11.103:3000"
 
-    // Singleton so MpvActivity reuses the same connected instance
-    @Volatile private var instance: SyncManager? = null
-    fun getInstance(): SyncManager {
-        return instance ?: synchronized(this) {
-            instance ?: SyncManager(SERVER_URL).also { instance = it }
+        @Volatile private var instance: SyncManager? = null
+        fun getInstance(): SyncManager {
+            return instance ?: synchronized(this) {
+                instance ?: SyncManager(SERVER_URL).also { instance = it }
+            }
         }
     }
-}
-
-// Add these fields alongside the existing ones:
-private var currentRoomCode: String? = null
-private var currentRoomUrl: String? = null
-private var currentIsHost: Boolean = false
 
     private val gson = Gson()
     private var ws: WebSocketClient? = null
     private var listener: SyncEventListener? = null
     private var reconnectJob: Thread? = null
 
-	private var currentRoomCode: String? = null
-	private var currentRoomUrl: String? = null
-	private var currentIsHost: Boolean = false
-
-	fun createRoom(url: String) {
-    currentRoomUrl = url
-    currentIsHost = true
-    send("create-room", "url" to url)
-}
-
-fun joinRoom(code: String) {
-    currentRoomCode = code
-    currentIsHost = false
-    send("join-room", "code" to code)
-}
+    private var currentRoomCode: String? = null
+    private var currentRoomUrl: String? = null
+    private var currentIsHost: Boolean = false
 
     fun setListener(l: SyncEventListener) {
         listener = l
@@ -58,10 +40,10 @@ fun joinRoom(code: String) {
         ws = object : WebSocketClient(URI(serverUrl)) {
 
             override fun onOpen(handshake: ServerHandshake) {
-				Log.d(TAG, "✅ Connected to sync server: $serverUrl")
-				listener?.invoke("connected", JsonObject())
-				startHeartbeat()
-		}
+                Log.d(TAG, "✅ Connected to sync server: $serverUrl")
+                listener?.invoke("connected", JsonObject())
+                startHeartbeat()
+            }
 
             override fun onMessage(message: String) {
                 try {
@@ -74,17 +56,17 @@ fun joinRoom(code: String) {
             }
 
             override fun onClose(code: Int, reason: String, remote: Boolean) {
-				Log.d(TAG, "❌ Disconnected: code=$code reason=$reason")
-				listener?.invoke("disconnected", JsonObject())
-				scheduleReconnect()
-				}
+                Log.d(TAG, "❌ Disconnected: code=$code reason=$reason")
+                listener?.invoke("disconnected", JsonObject())
+                scheduleReconnect()
+            }
 
             override fun onError(ex: Exception) {
                 Log.e(TAG, "WebSocket error", ex)
             }
         }
         Log.d(TAG, "🔄 Connecting to: $serverUrl")
-		ws?.connect()
+        ws?.connect()
     }
 
     fun send(event: String, vararg pairs: Pair<String, Any>) {
@@ -100,8 +82,18 @@ fun joinRoom(code: String) {
         ws?.send(gson.toJson(obj))
     }
 
-    fun createRoom(url: String) = send("create-room", "url" to url)
-    fun joinRoom(code: String) = send("join-room", "code" to code)
+    fun createRoom(url: String) {
+        currentRoomUrl = url
+        currentIsHost = true
+        send("create-room", "url" to url)
+    }
+
+    fun joinRoom(code: String) {
+        currentRoomCode = code
+        currentIsHost = false
+        send("join-room", "code" to code)
+    }
+
     fun play(timestamp: Double) = send("play", "timestamp" to timestamp)
     fun pause(timestamp: Double) = send("pause", "timestamp" to timestamp)
     fun seek(timestamp: Double) = send("seek", "timestamp" to timestamp)
@@ -118,25 +110,22 @@ fun joinRoom(code: String) {
     }
 
     private fun scheduleReconnect() {
-    reconnectJob = Thread {
-        Thread.sleep(3000)
-        connect()
-        Thread.sleep(1000) // wait for WS to open
-        val code = currentRoomCode
-        val url = currentRoomUrl
-        if (!currentIsHost && code != null) {
-            send("join-room", "code" to code)
-        } else if (currentIsHost && url != null) {
-            send("create-room", "url" to url)
-        }
-    }.also { it.isDaemon = true; it.start() }
-}
+        reconnectJob = Thread {
+            Thread.sleep(3000)
+            connect()
+            Thread.sleep(1000)
+            val code = currentRoomCode
+            val url = currentRoomUrl
+            if (!currentIsHost && code != null) {
+                send("join-room", "code" to code)
+            } else if (currentIsHost && url != null) {
+                send("create-room", "url" to url)
+            }
+        }.also { it.isDaemon = true; it.start() }
+    }
 
     fun disconnect() {
-    listening = false
-    writer?.close()
-    reader?.close()
-    socket?.close() // ← always null
-	}
-	
+        ws?.close()
+        ws = null
+    }
 }

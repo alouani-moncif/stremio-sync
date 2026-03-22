@@ -3,7 +3,6 @@ package com.stremiosync
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.KeyEvent
 import android.view.View
 import android.widget.Toast
 import androidx.fragment.app.FragmentActivity
@@ -23,7 +22,6 @@ class MpvActivity : FragmentActivity() {
     private var lastTimestamp = 0.0
     private val handler = Handler(Looper.getMainLooper())
 
-    // Poll timestamp every second
     private val timestampPoller = object : Runnable {
         override fun run() {
             if (player.isPlaying) {
@@ -36,14 +34,11 @@ class MpvActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-		Log.d("TEST", "MpvActivity started")
+        Log.d("TEST", "MpvActivity started")
 
         val url = intent.getStringExtra("url") ?: return finish()
-		
-		Log.d("TEST", "URL: $url")
-		
-        val roomCode = intent.getStringExtra("roomCode") ?: ""
-        val isHost = intent.getBooleanExtra("isHost", false)
+
+        Log.d("TEST", "URL: $url")
 
         // Fullscreen
         window.decorView.systemUiVisibility = (
@@ -67,11 +62,10 @@ class MpvActivity : FragmentActivity() {
         player.prepare()
         player.playWhenReady = true
 
-        // Setup sync
+        // Setup sync — reuse existing connected singleton
         syncManager = SyncManager.getInstance()
         setupPlayerListeners()
         setupSyncListeners()
-        
 
         // Start timestamp polling
         handler.post(timestampPoller)
@@ -141,6 +135,7 @@ class MpvActivity : FragmentActivity() {
         super.onDestroy()
         handler.removeCallbacks(timestampPoller)
         player.release()
+        // do NOT call syncManager.disconnect() — MainActivity owns the singleton
     }
 
     override fun onPause() {
@@ -150,5 +145,6 @@ class MpvActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // do NOT auto-play — sync state controls playback
     }
 }
