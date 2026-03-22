@@ -266,13 +266,12 @@ function handleSyncEvent(msg) {
       break;
 
     case "play":
-      // Server says everyone is ready — seek to timestamp and play
-      setIgnoreMpvEvents(2000);
-      lastSentPause = false;
-      sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
-      sendMpvCommand({ command: ["set_property", "pause", false] });
-      mainWindow?.webContents.send("play", msg.timestamp);
-      break;
+  setIgnoreMpvEvents(3000);  // ← was 2000, increase to 3000
+  lastSentPause = false;
+  sendMpvCommand({ command: ["seek", msg.timestamp, "absolute"] });
+  sendMpvCommand({ command: ["set_property", "pause", false] });
+  mainWindow?.webContents.send("play", msg.timestamp);
+  break;
 
     case "pause":
       setIgnoreMpvEvents(2000);

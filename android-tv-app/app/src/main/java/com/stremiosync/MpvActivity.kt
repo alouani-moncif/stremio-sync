@@ -121,119 +121,110 @@ class MpvActivity : FragmentActivity() {
         }
     }
 
-    private fun setupPlayerListeners() {
-        player.addListener(object : Player.Listener {
+   private fun setupPlayerListeners() {
+    player.addListener(object : Player.Listener {
 
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isSyncing) return
-
-                lastTimestamp = player.currentPosition / 1000.0
-
-                if (isPlaying) {
-                    // User pressed play — freeze player and coordinate with server
-                    player.pause()
-                    isSyncing = true
-                    showStatus("⏳ Waiting for partner...")
-                    // Cancel any previous ready timeout
-                    handler.removeCallbacks(readyTimeoutRunnable)
-                    handler.postDelayed(readyTimeoutRunnable, 8000)
-                    syncManager.ready(lastTimestamp)
-                    Log.d("MpvActivity", "User play → sent ready at $lastTimestamp")
-                } else {
-                    // User pressed pause
-                    syncManager.pause(lastTimestamp)
-                }
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isSyncing) return  // ← this now reliably blocks the echo
+            lastTimestamp = player.currentPosition / 1000.0
+            if (isPlaying) {
+                player.pause()
+                isSyncing = true
+                showStatus("⏳ Waiting for partner...")
+                handler.removeCallbacks(readyTimeoutRunnable)
+                handler.postDelayed(readyTimeoutRunnable, 8000)
+                syncManager.ready(lastTimestamp)
+            } else {
+                syncManager.pause(lastTimestamp)
             }
+        }
 
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                if (isSyncing) return
-                when (playbackState) {
-                    Player.STATE_BUFFERING -> {
-                        showStatus("⏳ Buffering...")
-                        syncManager.bufferingStart(lastTimestamp)
-                    }
-                    Player.STATE_READY -> {
-                        // Only send bufferingEnd if we were actually buffering
-                        // (not on initial load)
-                        if (player.isPlaying) {
-                            showStatus("")
-                            syncManager.bufferingEnd(lastTimestamp)
-                        }
-                    }
-                    else -> {}
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (isSyncing) return
+            when (playbackState) {
+                Player.STATE_BUFFERING -> {
+                    showStatus("⏳ Buffering...")
+                    syncManager.bufferingStart(lastTimestamp)
                 }
+                Player.STATE_READY -> {
+                    if (player.isPlaying) {
+                        showStatus("")
+                        syncManager.bufferingEnd(lastTimestamp)
+                    }
+                }
+                else -> {}
             }
-        })
-    }
+        }
+    })
+}
 
     private fun setupSyncListeners() {
-        syncManager.setListener { event, data ->
-            runOnUiThread {
-                Log.d("MpvActivity", "Sync event: $event")
-                when (event) {
-                    "play" -> {
-                        val ts = data.get("timestamp")?.asDouble ?: 0.0
-                        handler.removeCallbacks(readyTimeoutRunnable)
-                        isSyncing = true
-                        player.seekTo((ts * 1000).toLong())
-                        player.play()
-                        showStatus("")
-                        // Release sync lock after seek+play settles
-                        handler.postDelayed({
-                            isSyncing = false
-                        }, 1500)
-                    }
-                    "pause" -> {
-                        val ts = data.get("timestamp")?.asDouble ?: 0.0
-                        isSyncing = true
-                        player.seekTo((ts * 1000).toLong())
-                        player.pause()
-                        showStatus("")
-                        handler.postDelayed({ isSyncing = false }, 1500)
-                    }
-                    "seek" -> {
-                        val ts = data.get("timestamp")?.asDouble ?: 0.0
-                        isSyncing = true
-                        player.seekTo((ts * 1000).toLong())
-                        handler.postDelayed({ isSyncing = false }, 1500)
-                    }
-                    "buffering-start" -> {
-                        isSyncing = true
-                        player.pause()
-                        showStatus("⏳ Partner is buffering...")
-                    }
-                    "buffering-end-all" -> {
-                        val ts = data.get("timestamp")?.asDouble ?: lastTimestamp
-                        player.seekTo((ts * 1000).toLong())
-                        player.play()
-                        showStatus("")
-                        handler.postDelayed({ isSyncing = false }, 1500)
-                    }
-                    "peer-ready" -> {
-                        showStatus("⏳ Partner is ready, starting soon...")
-                    }
-                    "peer-connected" -> {
-                        showStatus("✓ Partner connected")
-                        handler.postDelayed({ showStatus("") }, 2000)
-                    }
-                    "peer-disconnected" -> {
-                        // Unfreeze immediately — no point waiting
-                        handler.removeCallbacks(readyTimeoutRunnable)
-                        isSyncing = false
-                        showStatus("⚠️ Partner disconnected")
-                        handler.postDelayed({ showStatus("") }, 3000)
-                    }
-                    "connected" -> {
-                        showStatus("✓ Connected to server")
-                        handler.postDelayed({ showStatus("") }, 2000)
-                    }
-                    "disconnected" -> {
-                        showStatus("⚠️ Reconnecting...")
-                    }
+    syncManager.setListener { event, data ->
+        runOnUiThread {
+            Log.d("MpvActivity", "Sync event: $event")
+            when (event) {
+                "play" -> {
+                    val ts = data.get("timestamp")?.asDouble ?: 0.0
+                    handler.removeCallbacks(readyTimeoutRunnable)
+                    isSyncing = true  // set BEFORE player.play() to block echo
+                    player.seekTo((ts * 1000).toLong())
+                    player.play()
+                    showStatus("")
+                    // Keep isSyncing true until ExoPlayer settles (2 full seconds)
+                    handler.postDelayed({ isSyncing = false }, 2000)
+                }
+                "pause" -> {
+                    val ts = data.get("timestamp")?.asDouble ?: 0.0
+                    isSyncing = true
+                    player.seekTo((ts * 1000).toLong())
+                    player.pause()
+                    showStatus("")
+                    handler.postDelayed({ isSyncing = false }, 2000)
+                }
+                "seek" -> {
+                    val ts = data.get("timestamp")?.asDouble ?: 0.0
+                    isSyncing = true
+                    player.seekTo((ts * 1000).toLong())
+                    handler.postDelayed({ isSyncing = false }, 1500)
+                }
+                "buffering-start" -> {
+                    isSyncing = true
+                    player.pause()
+                    showStatus("⏳ Partner is buffering...")
+                    // isSyncing stays true until buffering-end-all
+                }
+                "buffering-end-all" -> {
+                    val ts = data.get("timestamp")?.asDouble ?: lastTimestamp
+                    isSyncing = true
+                    player.seekTo((ts * 1000).toLong())
+                    player.play()
+                    showStatus("")
+                    handler.postDelayed({ isSyncing = false }, 2000)
+                }
+                "peer-ready" -> {
+                    showStatus("⏳ Partner is ready, starting soon...")
+                }
+                "peer-connected" -> {
+                    showStatus("✓ Partner connected")
+                    handler.postDelayed({ showStatus("") }, 2000)
+                }
+                "peer-disconnected" -> {
+                    handler.removeCallbacks(readyTimeoutRunnable)
+                    isSyncing = false
+                    showStatus("⚠️ Partner disconnected")
+                    handler.postDelayed({ showStatus("") }, 3000)
+                }
+                "connected" -> {
+                    showStatus("✓ Connected to server")
+                    handler.postDelayed({ showStatus("") }, 2000)
+                }
+                "disconnected" -> {
+                    showStatus("⚠️ Reconnecting...")
                 }
             }
         }
     }
+}
 
     override fun onDestroy() {
         super.onDestroy()
